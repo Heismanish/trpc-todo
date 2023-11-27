@@ -1,36 +1,135 @@
-This is a [Next.js](https://nextjs.org/) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
+Steps to setup:
 
-## Getting Started
+1. Install neccessary dependencies.
 
-First, run the development server:
-
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```shell
+yarn add @trpc/server @trpc/client @trpc/react-query @trpc/next @tanstack/react-query@^4.0.0 zod
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+2. Setting up the trpc route:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+   - create `api/trpc/[trpc]/route.ts` and define the route in the file as:
 
-This project uses [`next/font`](https://nextjs.org/docs/basic-features/font-optimization) to automatically optimize and load Inter, a custom Google Font.
+   ```typescript
+   import { fetchRequestHandler } from "@trpc/server/adapters/fetch";
+   import { appRouter } from "@/server";
+   const handler = (req: Request) =>
+     fetchRequestHandler({
+       endpoint: "/api/trpc",
+       req,
+       router: appRouter,
+       createContext: () => ({}),
+     });
 
-## Learn More
+   export { handler as GET, handler as POST };
+   ```
 
-To learn more about Next.js, take a look at the following resources:
+3. setting up the trpc server in `app/server/trpc.ts` as follows:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+   ```typescript
+   import { initTRPC } from "@trpc/server";
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js/) - your feedback and contributions are welcome!
+   const t = initTRPC.create();
 
-## Deploy on Vercel
+   export const router = t.router;
+   export const middleware = t.middleware;
+   export const publicProcedure = t.procedure;
+   ```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+4. create appRouter and export it in `app/server/index.ts`:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/deployment) for more details.
+   ```typescript
+   import { publicProcedure, router } from "./trpc";
+
+   export const appRouter = router({
+     todos: publicProcedure.query(() => [1, 2, 3, 4, 5, 6, 3]),
+   });
+
+   export type AppRouter = typeof appRouter;
+   ```
+
+5. Create client and provider to be used to call trpc functions:
+
+   - defining the client in `app/_trpc/client.ts`
+
+   ```typescript
+   import { createTRPCReact } from "@trpc/react-query";
+   import { type AppRouter } from "@/server";
+
+   // this is client for our useQuery Provider
+   export const trpc = createTRPCReact<AppRouter>({});
+   ```
+
+   - defining the Provider in `app/_trpc/Provider.tsx`
+
+   ```typescript
+   "use client";
+   import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+   import { httpBatchLink } from "@trpc/client";
+   import React, { useState } from "react";
+   import { trpc } from "./client";
+
+   // Provider for our useQuery
+   export default function Provider({
+     children,
+   }: {
+     children: React.ReactNode;
+   }) {
+     const [queryClient] = useState(() => new QueryClient());
+     const [trpcClient] = useState(() =>
+       trpc.createClient({
+         links: [
+           httpBatchLink({
+             url: "http://localhost:3000/trpc",
+
+             // You can pass any HTTP headers you wish here
+             //   async headers() {
+             //     return {
+             //       authorization: getAuthCookie(),
+             //     };
+             //   },
+           }),
+         ],
+       })
+     );
+
+     return (
+       <trpc.Provider client={trpcClient} queryClient={queryClient}>
+         <QueryClientProvider client={queryClient}>
+           {/* Your app here */}
+         </QueryClientProvider>
+       </trpc.Provider>
+     );
+   }
+   ```
+
+6. Wrap the children in `app/layout.tsx` with this provider
+
+   ```typescript
+   import type { Metadata } from "next";
+   import { Inter } from "next/font/google";
+   import "./globals.css";
+   import Provider from "@/app/_trpc/Provider";
+   const inter = Inter({ subsets: ["latin"] });
+
+   export const metadata: Metadata = {
+     title: "Todo-trpc",
+     description: "A todo app built using next and trpc.",
+   };
+
+   export default function RootLayout({
+     children,
+   }: {?
+     children: React.ReactNode;
+   }) {
+     return (
+       <html lang="en">
+         <Provider>
+           <body className={inter.className}>{children}</body>
+         </Provider>
+       </html>
+     );
+   }
+   ```
+
+NOTE: in nextjs router any folder of format "\_folderName" is ignored for routing.
